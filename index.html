@@ -1,168 +1,161 @@
 <!DOCTYPE html>
 <html lang="zh">
-
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>视觉缺陷模拟器 Vision Simulator</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #0e0e0e;
-      color: #ddd;
-      text-align: center;
-      margin: 0;
-      padding: 20px;
-    }
-
-    canvas {
-      border-radius: 16px;
-      box-shadow: 0 0 15px #000;
-      margin-top: 20px;
-      max-width: 100%;
-    }
-
-    .controls {
-      margin-top: 20px;
-      background: #1a1a1a;
-      padding: 15px;
-      border-radius: 12px;
-      display: inline-block;
-    }
-
-    label {
-      display: block;
-      margin: 8px 0;
-    }
-
-    input[type="range"] {
-      width: 300px;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>视觉缺陷模拟器 Vision Simulator</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #0e0e0e;
+    color: #ddd;
+    text-align: center;
+    margin: 0;
+    padding: 20px;
+  }
+  canvas {
+    border-radius: 16px;
+    box-shadow: 0 0 15px #000;
+    margin-top: 20px;
+    max-width: 100%;
+  }
+  .controls {
+    margin-top: 20px;
+    background: #1a1a1a;
+    padding: 15px;
+    border-radius: 12px;
+    display: inline-block;
+  }
+  label {
+    display: block;
+    margin: 8px 0;
+  }
+  input[type="range"] {
+    width: 300px;
+  }
+</style>
 </head>
-
 <body>
 
-  <h2>视觉缺陷模拟器 👁️</h2>
-  <p>通过调整下方滑块，模拟不同程度的近视、远视和散光。</p>
+<h2>视觉缺陷模拟器 👁️</h2>
+<p>通过调整下方滑块，模拟不同程度的近视、远视和散光。</p>
 
-  <div class="controls">
-    <label>
-      近视 / 远视（屈光度 D）：
-      <input type="range" id="blurRange" min="-2000" max="2000" step="50" value="0">
-      <span id="blurVal">0</span>°
-    </label>
+<div class="controls">
+  <label>
+    近视 / 远视（屈光度 D）：
+    <input type="range" id="blurRange" min="-2000" max="2000" step="50" value="0">
+    <span id="blurVal">0</span>°
+  </label>
 
-    <label>
-      散光强度：
-      <input type="range" id="astigRange" min="0" max="1000" step="50" value="0">
-      <span id="astigVal">0</span>°
-    </label>
+  <label>
+    散光强度：
+    <input type="range" id="astigRange" min="0" max="1000" step="50" value="0">
+    <span id="astigVal">0</span>°
+  </label>
 
-    <label>
-      散光角度：
-      <input type="range" id="angleRange" min="0" max="180" step="5" value="0">
-      <span id="angleVal">0°</span>
-    </label>
+  <label>
+    散光角度：
+    <input type="range" id="angleRange" min="0" max="180" step="5" value="0">
+    <span id="angleVal">0°</span>
+  </label>
 
-    <br>
-    <input type="file" id="imageLoader" accept="image/*">
-    <p>可上传任意图片进行视觉模拟</p>
-  </div>
+  <br>
+  <input type="file" id="imageLoader" accept="image/*">
+  <p>可上传任意图片进行视觉模拟</p>
+</div>
 
-  <canvas id="canvas" width="640" height="480"></canvas>
+<canvas id="canvas" width="640" height="480"></canvas>
 
-  <script>
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
 
-    let img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/9/99/Sample_User_Icon.png/480px-Sample_User_Icon.png";
+let img = new Image();
+img.crossOrigin = "anonymous";
+img.src = "https://upload.wikimedia.org/wikipedia/commons/thumb/9/99/Sample_User_Icon.png/480px-Sample_User_Icon.png";
 
-    img.onload = function () {
+img.onload = function() {
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+};
+
+// 近视 / 远视 模拟
+function applyBlur(radius, astig, angle) {
+  const tempCanvas = document.createElement('canvas');
+  const tctx = tempCanvas.getContext('2d');
+  tempCanvas.width = canvas.width;
+  tempCanvas.height = canvas.height;
+  tctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  let imgData = tctx.getImageData(0, 0, canvas.width, canvas.height);
+  let data = imgData.data;
+
+  // 模拟模糊：根据屈光度和散光混合应用方向性高斯模糊
+  const blurAmount = Math.abs(radius) / 300;  // 近视/远视模糊强度
+  const astigAmount = astig / 500;
+
+  let newData = new Uint8ClampedArray(data);
+
+  const w = canvas.width, h = canvas.height;
+  const angleRad = angle * Math.PI / 180;
+  const dx = Math.cos(angleRad) * astigAmount * 2;
+  const dy = Math.sin(angleRad) * astigAmount * 2;
+
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = (y * w + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        const sum =
+          data[i + c] * (1 - blurAmount) +
+          data[i + c - 4] * (blurAmount / 4) +
+          data[i + c + 4] * (blurAmount / 4) +
+          data[i + c - w * 4] * (blurAmount / 4) +
+          data[i + c + w * 4] * (blurAmount / 4);
+        newData[i + c] = sum;
+
+        // 加入散光偏移模糊
+        const xi = Math.floor(x + dx);
+        const yi = Math.floor(y + dy);
+        if (xi > 0 && xi < w && yi > 0 && yi < h) {
+          const j = (yi * w + xi) * 4;
+          newData[i + c] = (newData[i + c] + data[j + c]) / 2;
+        }
+      }
+    }
+  }
+
+  imgData.data.set(newData);
+  ctx.putImageData(imgData, 0, 0);
+}
+
+function update() {
+  const blurVal = parseInt(document.getElementById('blurRange').value);
+  const astigVal = parseInt(document.getElementById('astigRange').value);
+  const angleVal = parseInt(document.getElementById('angleRange').value);
+  document.getElementById('blurVal').textContent = blurVal;
+  document.getElementById('astigVal').textContent = astigVal;
+  document.getElementById('angleVal').textContent = angleVal + "°";
+
+  applyBlur(blurVal, astigVal, angleVal);
+}
+
+document.querySelectorAll("input[type='range']").forEach(e => {
+  e.addEventListener('input', update);
+});
+
+// 图片上传
+document.getElementById('imageLoader').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  const reader = new FileReader();
+  reader.onload = function(event) {
+    img = new Image();
+    img.onload = function() {
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    };
-
-    // 近视 / 远视 模拟
-    function applyBlur(radius, astig, angle) {
-      const tempCanvas = document.createElement('canvas');
-      const tctx = tempCanvas.getContext('2d');
-      tempCanvas.width = canvas.width;
-      tempCanvas.height = canvas.height;
-      tctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-      let imgData = tctx.getImageData(0, 0, canvas.width, canvas.height);
-      let data = imgData.data;
-
-      // 模拟模糊：根据屈光度和散光混合应用方向性高斯模糊
-      const blurAmount = Math.abs(radius) / 300;  // 近视/远视模糊强度
-      const astigAmount = astig / 500;
-
-      let newData = new Uint8ClampedArray(data);
-
-      const w = canvas.width, h = canvas.height;
-      const angleRad = angle * Math.PI / 180;
-      const dx = Math.cos(angleRad) * astigAmount * 2;
-      const dy = Math.sin(angleRad) * astigAmount * 2;
-
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          const i = (y * w + x) * 4;
-          for (let c = 0; c < 3; c++) {
-            const sum =
-              data[i + c] * (1 - blurAmount) +
-              data[i + c - 4] * (blurAmount / 4) +
-              data[i + c + 4] * (blurAmount / 4) +
-              data[i + c - w * 4] * (blurAmount / 4) +
-              data[i + c + w * 4] * (blurAmount / 4);
-            newData[i + c] = sum;
-
-            // 加入散光偏移模糊
-            const xi = Math.floor(x + dx);
-            const yi = Math.floor(y + dy);
-            if (xi > 0 && xi < w && yi > 0 && yi < h) {
-              const j = (yi * w + xi) * 4;
-              newData[i + c] = (newData[i + c] + data[j + c]) / 2;
-            }
-          }
-        }
-      }
-
-      imgData.data.set(newData);
-      ctx.putImageData(imgData, 0, 0);
     }
-
-    function update() {
-      const blurVal = parseInt(document.getElementById('blurRange').value);
-      const astigVal = parseInt(document.getElementById('astigRange').value);
-      const angleVal = parseInt(document.getElementById('angleRange').value);
-      document.getElementById('blurVal').textContent = blurVal;
-      document.getElementById('astigVal').textContent = astigVal;
-      document.getElementById('angleVal').textContent = angleVal + "°";
-
-      applyBlur(blurVal, astigVal, angleVal);
-    }
-
-    document.querySelectorAll("input[type='range']").forEach(e => {
-      e.addEventListener('input', update);
-    });
-
-    // 图片上传
-    document.getElementById('imageLoader').addEventListener('change', function (e) {
-      const file = e.target.files[0];
-      const reader = new FileReader();
-      reader.onload = function (event) {
-        img = new Image();
-        img.onload = function () {
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        }
-        img.src = event.target.result;
-      }
-      reader.readAsDataURL(file);
-    });
-  </script>
+    img.src = event.target.result;
+  }
+  reader.readAsDataURL(file);
+});
+</script>
 
 </body>
-
 </html>
