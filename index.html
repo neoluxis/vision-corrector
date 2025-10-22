@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>Vision-correct Demo — 预处理图像实验</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 18px; background:#f7f8fb; color:#111; }
+  h1 { font-size:18px; margin:0 0 8px 0; }
+  .row { display:flex; gap:16px; align-items:flex-start; }
+  .left { width:640px; }
+  canvas { background:#ddd; width:640px; height:480px; display:block; border-radius:8px; box-shadow:0 6px 18px rgba(20,20,40,0.08); }
+  .controls { width:360px; padding:12px; background:white; border-radius:8px; box-shadow:0 4px 12px rgba(20,20,40,0.06); }
+  label { display:block; font-size:13px; margin-top:10px; }
+  input[type="range"] { width:100%; }
+  .small { font-size:12px; color:#555; margin-top:6px; }
+  .fileRow { margin-top:8px; display:flex; gap:8px; align-items:center; }
+  button { padding:8px 10px; border-radius:6px; border:1px solid #ddd; background:#fff; cursor:pointer; }
+  footer { margin-top:12px; font-size:12px; color:#666; }
+</style>
+</head>
+<body>
+  <h1>Vision-correct Demo — 屏幕图像预处理（实验）</h1>
+  <div class="row">
+    <div class="left">
+      <canvas id="preview" width="1280" height="960"></canvas>
+      <div class="fileRow">
+        <input id="file" type="file" accept="image/*">
+        <button id="useSample">使用示例图片</button>
+        <button id="reset">重置</button>
+      </div>
+      <div class="small">说明：拖动右侧滑块，调整图像预处理参数，看看哪种设置对你视力更友好。此工具**不能替代验光**，仅供实验。</div>
+    </div>
+
+    <div class="controls">
+      <div>
+        <label>Defocus（近似“度数” — 模糊强度） <span id="defTxt">0.0</span></label>
+        <input id="defocus" type="range" min="0" max="10" step="0.1" value="0">
+      </div>
+
+      <div>
+        <label>Astigmatism 强度（各向异性模糊） <span id="astTxt">0.0</span></label>
+        <input id="astig" type="range" min="0" max="10" step="0.1" value="0">
+      </div>
+
+      <div>
+        <label>Astigmatism 角度（度） <span id="angTxt">0°</span></label>
+        <input id="astAngle" type="range" min="0" max="180" step="1" value="0">
+      </div>
+
+      <div>
+        <label>Sharpness（锐化强度，负值产生“反锐化”） <span id="sharpTxt">0.0</span></label>
+        <input id="sharp" type="range" min="-2" max="4" step="0.1" value="0">
+      </div>
+
+      <div>
+        <label>Magnify（整体缩放，模拟近视/远视所需大小） <span id="magTxt">1.00x</span></label>
+        <input id="mag" type="range" min="0.6" max="1.6" step="0.01" value="1">
+      </div>
+
+      <div style="margin-top:12px;">
+        <label><input id="invertAst" type="checkbox"> 反向各向异性（视力类型不同需要切换）</label>
+      </div>
+
+      <div style="margin-top:12px;">
+        <button id="apply">立即应用（实时也会更新）</button>
+      </div>
+
+      <footer>
+        技术说明：实现基于 Canvas 2D。主要处理步骤：<br>
+        1) 局部放大/缩放（模拟远近需求） 2) 各向异性（按角度方向更强的模糊） 3) Gaussian 模糊（defocus） 4) unsharp 锐化（尝试恢复细节）<br>
+        此方法是经验性预处理，不等同于光学处方的逆卷积。  
+      </footer>
+    </div>
+  </div>
+
+<script>
+// 简易图像预处理实验脚本（同步、可直接运行）
+// 原理（简述）：
+//  - 使用离屏 canvas 做多次 drawImage 与像素卷积：方向性模糊（简单实现为多次偏移叠加）+ 高斯模糊（可选）+ unsharp mask（锐化）
+//  - 说明：这是一个实验工具，重点是“可调、即时看效果”，而非严格医学校正
+
+const preview = document.getElementById('preview');
+const ctx = preview.getContext('2d', { willReadFrequently: true });
+
+const fileIn = document.getElementById('file');
+const useSample = document.getElementById('useSample');
+const resetBtn = document.getElementById('reset');
+const applyBtn = document.getElementById('apply');
+const defocus = document.getElementById('defocus');
+const astig = document.getElementById('astig');
+const astAngle = document.getElementById('astAngle');
+const sharp = document.getElementById('sharp');
+const mag = document.getElementById('mag');
+const invertAst = document.getElementById('invertAst');
+
+const defTxt = document.getElementById('defTxt');
+const astTxt = document.getElementById('astTxt');
+const angTxt = document.getElementById('angTxt');
+const sharpTxt = document.getElementById('sharpTxt');
+const magTxt = document.getElementById('magTxt');
+
+let img = new Image();
+img.crossOrigin = "anonymous";
+
+// 默认示例图
+img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="960">
+    <rect width="100%" height="100%" fill="#f0f4f8"/>
+    <text x="50%" y="40%" font-size="48" text-anchor="middle" fill="#334" font-family="Arial">示例图片 — 请替换为你的屏幕截图或照片</text>
+    <text x="50%" y="60%" font-size="28" text-anchor="middle" fill="#667">调整右侧滑块来实验“预处理”</text>
+  </svg>`
+);
+
+function updateTextLabels(){
+  defTxt.textContent = Number(defocus.value).toFixed(1);
+  astTxt.textContent = Number(astig.value).toFixed(1);
+  angTxt.textContent = astAngle.value + '°';
+  sharpTxt.textContent = Number(sharp.value).toFixed(1);
+  magTxt.textContent = Number(mag.value).toFixed(2) + 'x';
+}
+
+updateTextLabels();
+
+function drawOriginalToOffscreen(img, w, h){
+  const off = document.createElement('canvas');
+  off.width = w;
+  off.height = h;
+  const c = off.getContext('2d');
+  c.drawImage(img, 0, 0, w, h);
+  return off;
+}
+
+// 简易方向性模糊（通过多次 drawImage 偏移并累加实现）
+// strength: 0..10 (像素偏移次数权重)， angle: radian, invert: boolean (反向)
+// 返回 canvas
+function anisotropicBlur(srcCanvas, strength, angle, invert){
+  if(strength <= 0.001) return srcCanvas;
+  const w = srcCanvas.width, h = srcCanvas.height;
+  const out = document.createElement('canvas'); out.width = w; out.height = h;
+  const octx = out.getContext('2d');
+  octx.clearRect(0,0,w,h);
+
+  // 采样次数与偏移步长根据 strength 调整
+  const samples = Math.min(40, Math.round(2 + Math.abs(strength)*3));
+  const maxOffset = Math.max(w,h) * (Math.min(1, Math.abs(strength)/20)); // 最大偏移像素
+  const dx = Math.cos(angle), dy = Math.sin(angle);
+  // 如果 invert checked 则把偏移方向改为垂直（近似反向模糊），这里简单处理为反向向量
+  const dirx = invert ? -dx : dx;
+  const diry = invert ? -dy : dy;
+
+  const alphaStep = 1 / samples;
+  for(let i=0;i<samples;i++){
+    const t = (i - (samples-1)/2) / ((samples-1)/2); // -1..1
+    const offset = t * maxOffset;
+    octx.globalAlpha = alphaStep;
+    octx.drawImage(srcCanvas, offset*dirx, offset*diry, w, h);
+  }
+  octx.globalAlpha = 1.0;
+  return out;
+}
+
+// 简易高斯模糊（使用 Canvas filter 可能更快，但兼容性考虑这里做手工box blur叠加）
+// strength: 0..10 -> if 0 return src
+function gaussianBlurSimple(srcCanvas, strength){
+  if(strength <= 0.001) return srcCanvas;
+  // 使用 canvas filter if available (现代浏览器)
+  try {
+    const w = srcCanvas.width, h = srcCanvas.height;
+    const out = document.createElement('canvas'); out.width = w; out.height = h;
+    const octx = out.getContext('2d');
+    octx.filter = `blur(${Math.max(0.2, strength)}px)`;
+    octx.drawImage(srcCanvas, 0, 0);
+    octx.filter = 'none';
+    return out;
+  } catch(e){
+    return srcCanvas; // 回退
+  }
+}
+
+// unsharp mask: sharpen = original + amount * (original - blurred)
+function unsharpMask(origCanvas, blurCanvas, amount){
+  if(Math.abs(amount) < 1e-6) return origCanvas;
+  const w = origCanvas.width, h = origCanvas.height;
+  const octx = origCanvas.getContext('2d');
+  const bctx = blurCanvas.getContext('2d');
+
+  const orig = octx.getImageData(0,0,w,h);
+  const blur = bctx.getImageData(0,0,w,h);
+  const out = octx.createImageData(w,h);
+  const a = Number(amount);
+  for(let i=0;i<orig.data.length;i+=4){
+    for(let c=0;c<3;c++){
+      const v = orig.data[i+c] + a * (orig.data[i+c] - blur.data[i+c]);
+      out.data[i+c] = Math.max(0, Math.min(255, Math.round(v)));
+    }
+    out.data[i+3] = 255;
+  }
+  const outCan = document.createElement('canvas');
+  outCan.width = w; outCan.height = h;
+  outCan.getContext('2d').putImageData(out, 0, 0);
+  return outCan;
+}
+
+function processAndRender(){
+  updateTextLabels();
+  // 目标画布尺寸（内部使用更高分辨率以便锐化有效）
+  const w = preview.width = 1280;
+  const h = preview.height = 960;
+
+  // 先画入基础 offscreen，根据 Magnify 做缩放（居中）
+  const magV = Number(mag.value);
+  const base = drawOriginalToOffscreen(img, Math.round(w*magV), Math.round(h*magV));
+  // 若放大后大于画布，绘制时居中裁切；若小则居中显示
+  // 创建 tmp canvas 为目标大小并绘制 base 居中
+  const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h;
+  const tctx = tmp.getContext('2d');
+  tctx.fillStyle = '#ddd'; tctx.fillRect(0,0,w,h);
+  const sx = Math.max(0, (w - base.width)/2);
+  const sy = Math.max(0, (h - base.height)/2);
+  tctx.drawImage(base, sx, sy, base.width, base.height);
+
+  // 各向异性模糊
+  const ast = Number(astig.value);
+  const angleDeg = Number(astAngle.value);
+  const angleRad = angleDeg * Math.PI / 180;
+  const inverted = invertAst.checked;
+  let anis = anisotropicBlur(tmp, ast, angleRad, inverted);
+
+  // defocus (= Gaussian blur)
+  const def = Number(defocus.value);
+  let gblur = gaussianBlurSimple(anis, def);
+
+  // unsharp: compute sharpen between anis (orig) and gblur (blurred)
+  const sharpness = Number(sharp.value);
+  let finalCan = tmp;
+  if(Math.abs(sharpness) > 1e-6){
+    finalCan = unsharpMask(anis, gblur, sharpness);
+  } else {
+    finalCan = anis;
+  }
+
+  // 最后画到主 canvas（缩放以适配 current CSS size）
+  ctx.clearRect(0,0,w,h);
+  ctx.drawImage(finalCan, 0, 0, w, h);
+}
+
+// 事件绑定
+[defocus, astig, astAngle, sharp, mag, invertAst].forEach(el=>{
+  el.addEventListener('input', ()=> {
+    updateTextLabels();
+    processAndRender();
+  });
+});
+
+fileIn.addEventListener('change', (ev)=>{
+  const f = ev.target.files && ev.target.files[0];
+  if(!f) return;
+  const url = URL.createObjectURL(f);
+  img = new Image();
+  img.onload = ()=>{
+    processAndRender();
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+});
+
+useSample.addEventListener('click', ()=>{
+  img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = ()=> processAndRender();
+  // 可替换为真实示例或默认示例
+  img.src = 'https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/800px-PNG_transparency_demonstration_1.png';
+});
+
+resetBtn.addEventListener('click', ()=>{
+  defocus.value = 0;
+  astig.value = 0;
+  astAngle.value = 0;
+  sharp.value = 0;
+  mag.value = 1;
+  invertAst.checked = false;
+  updateTextLabels();
+  processAndRender();
+});
+
+applyBtn.addEventListener('click', processAndRender);
+
+// load initial
+img.onload = ()=> processAndRender();
+
+</script>
+</body>
+</html>
